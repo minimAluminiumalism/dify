@@ -8,6 +8,8 @@ ENV UV_VERSION=0.6.14
 
 RUN pip install --no-cache-dir uv==${UV_VERSION}
 
+ENV VIRTUAL_ENV=/opt/.venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 FROM base AS packages
 
@@ -20,6 +22,7 @@ RUN apt-get update \
 # Install Python dependencies
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked
+RUN mv /app/api/.venv ${VIRTUAL_ENV}
 
 # production stage
 FROM base AS production
@@ -55,7 +58,6 @@ RUN \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python environment and packages
-ENV VIRTUAL_ENV=/app/api/.venv
 COPY --from=packages ${VIRTUAL_ENV} ${VIRTUAL_ENV}
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 

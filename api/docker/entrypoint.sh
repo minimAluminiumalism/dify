@@ -4,7 +4,7 @@ set -e
 
 if [[ "${MIGRATION_ENABLED}" == "true" ]]; then
   echo "Running migrations"
-  flask upgrade-db
+  python -m flask upgrade-db
 fi
 
 if [[ "${MODE}" == "worker" ]]; then
@@ -20,17 +20,17 @@ if [[ "${MODE}" == "worker" ]]; then
     CONCURRENCY_OPTION="-c ${CELERY_WORKER_AMOUNT:-1}"
   fi
 
-  exec celery -A app.celery worker -P ${CELERY_WORKER_CLASS:-gevent} $CONCURRENCY_OPTION \
+  exec python -m celery -A app.celery worker -P ${CELERY_WORKER_CLASS:-gevent} $CONCURRENCY_OPTION \
     --max-tasks-per-child ${MAX_TASK_PRE_CHILD:-50} --loglevel ${LOG_LEVEL:-INFO} \
     -Q ${CELERY_QUEUES:-dataset,mail,ops_trace,app_deletion}
 
 elif [[ "${MODE}" == "beat" ]]; then
-  exec celery -A app.celery beat --loglevel ${LOG_LEVEL:-INFO}
+  exec python -m celery -A app.celery beat --loglevel ${LOG_LEVEL:-INFO}
 else
   if [[ "${DEBUG}" == "true" ]]; then
-    exec flask run --host=${DIFY_BIND_ADDRESS:-0.0.0.0} --port=${DIFY_PORT:-5001} --debug
+    exec python -m flask run --host=${DIFY_BIND_ADDRESS:-0.0.0.0} --port=${DIFY_PORT:-5001} --debug
   else
-    exec gunicorn \
+    exec python -m gunicorn \
       --bind "${DIFY_BIND_ADDRESS:-0.0.0.0}:${DIFY_PORT:-5001}" \
       --workers ${SERVER_WORKER_AMOUNT:-1} \
       --worker-class ${SERVER_WORKER_CLASS:-gevent} \

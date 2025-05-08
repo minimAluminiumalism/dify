@@ -115,7 +115,7 @@ def init_app(app: DifyApp):
 
     from opentelemetry import trace
     from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
     from opentelemetry.instrumentation.celery import CeleryInstrumentor
     from opentelemetry.instrumentation.flask import FlaskInstrumentor
     from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
@@ -124,7 +124,7 @@ def init_app(app: DifyApp):
     from opentelemetry.propagators.b3 import B3Format
     from opentelemetry.propagators.composite import CompositePropagator
     from opentelemetry.sdk.metrics import MeterProvider
-    from opentelemetry.sdk.metrics.export import ConsoleMetricExporter, PeriodicExportingMetricReader
+    from opentelemetry.sdk.metrics.export import ConsoleMetricExporter
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import (
@@ -153,6 +153,7 @@ def init_app(app: DifyApp):
             ResourceAttributes.OS_TYPE: platform.system().lower(),
             ResourceAttributes.OS_DESCRIPTION: platform.platform(),
             ResourceAttributes.OS_VERSION: platform.version(),
+            "token": "TAPM_TOKEN", # 这里添加 tapm 的 token
         }
     )
     sampler = ParentBasedTraceIdRatio(dify_config.OTEL_SAMPLING_RATE)
@@ -162,17 +163,11 @@ def init_app(app: DifyApp):
     metric_exporter: Union[OTLPMetricExporter, ConsoleMetricExporter]
     if dify_config.OTEL_EXPORTER_TYPE == "otlp":
         exporter = OTLPSpanExporter(
-            endpoint=dify_config.OTLP_BASE_ENDPOINT + "/v1/traces",
-            headers={"Authorization": f"Bearer {dify_config.OTLP_API_KEY}"},
-        )
-        metric_exporter = OTLPMetricExporter(
-            endpoint=dify_config.OTLP_BASE_ENDPOINT + "/v1/metrics",
-            headers={"Authorization": f"Bearer {dify_config.OTLP_API_KEY}"},
+            endpoint=dify_config.OTLP_BASE_ENDPOINT,
         )
     else:
         # Fallback to console exporter
         exporter = ConsoleSpanExporter()
-        metric_exporter = ConsoleMetricExporter()
 
     provider.add_span_processor(
         BatchSpanProcessor(
@@ -183,12 +178,6 @@ def init_app(app: DifyApp):
             export_timeout_millis=dify_config.OTEL_BATCH_EXPORT_TIMEOUT,
         )
     )
-    reader = PeriodicExportingMetricReader(
-        metric_exporter,
-        export_interval_millis=dify_config.OTEL_METRIC_EXPORT_INTERVAL,
-        export_timeout_millis=dify_config.OTEL_METRIC_EXPORT_TIMEOUT,
-    )
-    set_meter_provider(MeterProvider(resource=resource, metric_readers=[reader]))
     if not is_celery_worker():
         init_flask_instrumentor(app)
         CeleryInstrumentor(tracer_provider=get_tracer_provider(), meter_provider=get_meter_provider()).instrument()
