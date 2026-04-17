@@ -3,7 +3,7 @@ import time
 from collections.abc import Mapping
 from datetime import datetime
 from functools import cached_property
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -16,14 +16,56 @@ from core.trigger.entities.entities import Subscription
 from core.trigger.utils.endpoint import generate_plugin_trigger_endpoint_url, generate_webhook_trigger_endpoint
 from libs.datetime_utils import naive_utc_now
 from libs.uuid_utils import uuidv7
-from models.base import Base, TypeBase
-from models.engine import db
-from models.enums import AppTriggerStatus, AppTriggerType, CreatorUserRole, WorkflowTriggerStatus
-from models.model import Account
-from models.types import EnumText, LongText, StringUUID
+
+from .base import TypeBase
+from .engine import db
+from .enums import AppTriggerStatus, AppTriggerType, CreatorUserRole, WorkflowTriggerStatus
+from .model import Account
+from .types import EnumText, LongText, StringUUID
+
+TriggerJsonObject = dict[str, object]
+TriggerCredentials = dict[str, str]
 
 
-class TriggerSubscription(Base):
+class WorkflowTriggerLogDict(TypedDict):
+    id: str
+    tenant_id: str
+    app_id: str
+    workflow_id: str
+    workflow_run_id: str | None
+    root_node_id: str | None
+    trigger_metadata: Any
+    trigger_type: str
+    trigger_data: Any
+    inputs: Any
+    outputs: Any
+    status: str
+    error: str | None
+    queue_name: str
+    celery_task_id: str | None
+    retry_count: int
+    elapsed_time: float | None
+    total_tokens: int | None
+    created_by_role: str
+    created_by: str
+    created_at: str | None
+    triggered_at: str | None
+    finished_at: str | None
+
+
+class WorkflowSchedulePlanDict(TypedDict):
+    id: str
+    app_id: str
+    node_id: str
+    tenant_id: str
+    cron_expression: str
+    timezone: str
+    next_run_at: str | None
+    created_at: str
+    updated_at: str
+
+
+class TriggerSubscription(TypeBase):
     """
     Trigger provider model for managing credentials
     Supports multiple credential instances per provider
@@ -40,7 +82,9 @@ class TriggerSubscription(Base):
         UniqueConstraint("tenant_id", "provider_id", "name", name="unique_trigger_provider"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()))
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False, comment="Subscription instance name")
     tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     user_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
@@ -48,13 +92,19 @@ class TriggerSubscription(Base):
         String(255), nullable=False, comment="Provider identifier (e.g., plugin_id/provider_name)"
     )
     endpoint_id: Mapped[str] = mapped_column(String(255), nullable=False, comment="Subscription endpoint")
-    parameters: Mapped[dict[str, Any]] = mapped_column(sa.JSON, nullable=False, comment="Subscription parameters JSON")
-    properties: Mapped[dict[str, Any]] = mapped_column(sa.JSON, nullable=False, comment="Subscription properties JSON")
+    parameters: Mapped[TriggerJsonObject] = mapped_column(
+        sa.JSON, nullable=False, comment="Subscription parameters JSON"
+    )
+    properties: Mapped[TriggerJsonObject] = mapped_column(
+        sa.JSON, nullable=False, comment="Subscription properties JSON"
+    )
 
-    credentials: Mapped[dict[str, Any]] = mapped_column(
+    credentials: Mapped[TriggerCredentials] = mapped_column(
         sa.JSON, nullable=False, comment="Subscription credentials JSON"
     )
-    credential_type: Mapped[str] = mapped_column(String(50), nullable=False, comment="oauth or api_key")
+    credential_type: Mapped[CredentialType] = mapped_column(
+        EnumText(CredentialType, length=50), nullable=False, comment="oauth or api_key"
+    )
     credential_expires_at: Mapped[int] = mapped_column(
         Integer, default=-1, comment="OAuth token expiration timestamp, -1 for never"
     )
@@ -62,12 +112,15 @@ class TriggerSubscription(Base):
         Integer, default=-1, comment="Subscription instance expiration timestamp, -1 for never"
     )
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         server_default=func.current_timestamp(),
         server_onupdate=func.current_timestamp(),
+        init=False,
     )
 
     def is_credential_expired(self) -> bool:
@@ -93,64 +146,74 @@ class TriggerSubscription(Base):
             endpoint=generate_plugin_trigger_endpoint_url(self.endpoint_id),
             parameters=self.parameters,
             properties=self.properties,
-            credential_type=CredentialType(self.credential_type),
+            credential_type=self.credential_type,
             credentials=self.credentials,
             workflows_in_use=-1,
         )
 
 
 # system level trigger oauth client params
-class TriggerOAuthSystemClient(Base):
+class TriggerOAuthSystemClient(TypeBase):
     __tablename__ = "trigger_oauth_system_clients"
     __table_args__ = (
         sa.PrimaryKeyConstraint("id", name="trigger_oauth_system_client_pkey"),
         sa.UniqueConstraint("plugin_id", "provider", name="trigger_oauth_system_client_plugin_id_provider_idx"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()))
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     plugin_id: Mapped[str] = mapped_column(String(255), nullable=False)
     provider: Mapped[str] = mapped_column(String(255), nullable=False)
     # oauth params of the trigger provider
     encrypted_oauth_params: Mapped[str] = mapped_column(LongText, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         server_default=func.current_timestamp(),
         server_onupdate=func.current_timestamp(),
+        init=False,
     )
 
 
 # tenant level trigger oauth client params (client_id, client_secret, etc.)
-class TriggerOAuthTenantClient(Base):
+class TriggerOAuthTenantClient(TypeBase):
     __tablename__ = "trigger_oauth_tenant_clients"
     __table_args__ = (
         sa.PrimaryKeyConstraint("id", name="trigger_oauth_tenant_client_pkey"),
         sa.UniqueConstraint("tenant_id", "plugin_id", "provider", name="unique_trigger_oauth_tenant_client"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()))
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     # tenant id
     tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     plugin_id: Mapped[str] = mapped_column(String(255), nullable=False)
     provider: Mapped[str] = mapped_column(String(255), nullable=False)
-    enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("true"))
+    enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.text("true"), default=True)
     # oauth params of the trigger provider
-    encrypted_oauth_params: Mapped[str] = mapped_column(LongText, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    encrypted_oauth_params: Mapped[str] = mapped_column(LongText, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         server_default=func.current_timestamp(),
         server_onupdate=func.current_timestamp(),
+        init=False,
     )
 
     @property
-    def oauth_params(self) -> Mapping[str, Any]:
-        return cast(Mapping[str, Any], json.loads(self.encrypted_oauth_params or "{}"))
+    def oauth_params(self) -> Mapping[str, object]:
+        return cast(TriggerJsonObject, json.loads(self.encrypted_oauth_params or "{}"))
 
 
-class WorkflowTriggerLog(Base):
+class WorkflowTriggerLog(TypeBase):
     """
     Workflow Trigger Log
 
@@ -192,7 +255,9 @@ class WorkflowTriggerLog(Base):
         sa.Index("workflow_trigger_log_workflow_id_idx", "workflow_id"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuidv7()))
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuidv7()), default_factory=lambda: str(uuidv7()), init=False
+    )
     tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     workflow_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
@@ -204,24 +269,21 @@ class WorkflowTriggerLog(Base):
     inputs: Mapped[str] = mapped_column(LongText, nullable=False)  # Just inputs for easy viewing
     outputs: Mapped[str | None] = mapped_column(LongText, nullable=True)
 
-    status: Mapped[str] = mapped_column(
-        EnumText(WorkflowTriggerStatus, length=50), nullable=False, default=WorkflowTriggerStatus.PENDING
-    )
+    status: Mapped[str] = mapped_column(EnumText(WorkflowTriggerStatus, length=50), nullable=False)
     error: Mapped[str | None] = mapped_column(LongText, nullable=True)
 
     queue_name: Mapped[str] = mapped_column(String(100), nullable=False)
     celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    retry_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
-
-    elapsed_time: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
-    total_tokens: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
-    created_by_role: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by_role: Mapped[CreatorUserRole] = mapped_column(EnumText(CreatorUserRole, length=255), nullable=False)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
-
-    triggered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    retry_count: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    elapsed_time: Mapped[float | None] = mapped_column(sa.Float, nullable=True, default=None)
+    total_tokens: Mapped[int | None] = mapped_column(sa.Integer, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
+    triggered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
     @property
     def created_by_account(self):
@@ -230,12 +292,12 @@ class WorkflowTriggerLog(Base):
 
     @property
     def created_by_end_user(self):
-        from models.model import EndUser
+        from .model import EndUser
 
         created_by_role = CreatorUserRole(self.created_by_role)
         return db.session.get(EndUser, self.created_by) if created_by_role == CreatorUserRole.END_USER else None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> WorkflowTriggerLogDict:
         """Convert to dictionary for API responses"""
         return {
             "id": self.id,
@@ -264,7 +326,7 @@ class WorkflowTriggerLog(Base):
         }
 
 
-class WorkflowWebhookTrigger(Base):
+class WorkflowWebhookTrigger(TypeBase):
     """
     Workflow Webhook Trigger
 
@@ -287,18 +349,23 @@ class WorkflowWebhookTrigger(Base):
         sa.UniqueConstraint("webhook_id", name="uniq_webhook_id"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuidv7()))
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuidv7()), default_factory=lambda: str(uuidv7()), init=False
+    )
     app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     node_id: Mapped[str] = mapped_column(String(64), nullable=False)
     tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     webhook_id: Mapped[str] = mapped_column(String(24), nullable=False)
     created_by: Mapped[str] = mapped_column(StringUUID, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         server_default=func.current_timestamp(),
         server_onupdate=func.current_timestamp(),
+        init=False,
     )
 
     @cached_property
@@ -316,7 +383,7 @@ class WorkflowWebhookTrigger(Base):
         return generate_webhook_trigger_endpoint(self.webhook_id, True)
 
 
-class WorkflowPluginTrigger(Base):
+class WorkflowPluginTrigger(TypeBase):
     """
     Workflow Plugin Trigger
 
@@ -341,23 +408,28 @@ class WorkflowPluginTrigger(Base):
         sa.UniqueConstraint("app_id", "node_id", name="uniq_app_node_subscription"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuid4()))
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
     app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     node_id: Mapped[str] = mapped_column(String(64), nullable=False)
     tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     provider_id: Mapped[str] = mapped_column(String(512), nullable=False)
     event_name: Mapped[str] = mapped_column(String(255), nullable=False)
     subscription_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         server_default=func.current_timestamp(),
         server_onupdate=func.current_timestamp(),
+        init=False,
     )
 
 
-class AppTrigger(Base):
+class AppTrigger(TypeBase):
     """
     App Trigger
 
@@ -382,22 +454,27 @@ class AppTrigger(Base):
         sa.Index("app_trigger_tenant_app_idx", "tenant_id", "app_id"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, default=lambda: str(uuidv7()))
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuidv7()), default_factory=lambda: str(uuidv7()), init=False
+    )
     tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     node_id: Mapped[str | None] = mapped_column(String(64), nullable=False)
     trigger_type: Mapped[str] = mapped_column(EnumText(AppTriggerType, length=50), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    provider_name: Mapped[str] = mapped_column(String(255), server_default="", nullable=True)
+    provider_name: Mapped[str | None] = mapped_column(String(255), nullable=True, server_default="", default="")
     status: Mapped[str] = mapped_column(
         EnumText(AppTriggerStatus, length=50), nullable=False, default=AppTriggerStatus.ENABLED
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=naive_utc_now(),
         server_onupdate=func.current_timestamp(),
+        init=False,
     )
 
 
@@ -427,7 +504,13 @@ class WorkflowSchedulePlan(TypeBase):
         sa.Index("workflow_schedule_plan_next_idx", "next_run_at"),
     )
 
-    id: Mapped[str] = mapped_column(StringUUID, primary_key=True, default=lambda: str(uuidv7()), init=False)
+    id: Mapped[str] = mapped_column(
+        StringUUID,
+        primary_key=True,
+        insert_default=lambda: str(uuidv7()),
+        default_factory=lambda: str(uuidv7()),
+        init=False,
+    )
     app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
     node_id: Mapped[str] = mapped_column(String(64), nullable=False)
     tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
@@ -445,7 +528,7 @@ class WorkflowSchedulePlan(TypeBase):
         DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), init=False
     )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> WorkflowSchedulePlanDict:
         """Convert to dictionary representation"""
         return {
             "id": self.id,

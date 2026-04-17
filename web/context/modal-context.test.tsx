@@ -1,55 +1,60 @@
-import React from 'react'
-import { act, render, screen, waitFor } from '@testing-library/react'
-import { ModalContextProvider } from '@/context/modal-context'
-import { Plan } from '@/app/components/billing/type'
+import { act, screen, waitFor } from '@testing-library/react'
+import * as React from 'react'
 import { defaultPlan } from '@/app/components/billing/config'
+import { Plan } from '@/app/components/billing/type'
+import { ModalContextProvider } from '@/context/modal-context-provider'
+import { renderWithNuqs } from '@/test/nuqs-testing'
 
-jest.mock('@/config', () => {
-  const actual = jest.requireActual('@/config')
+vi.mock('@/config', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/config')>()
   return {
     ...actual,
     IS_CLOUD_EDITION: true,
   }
 })
 
-jest.mock('next/navigation', () => ({
-  useSearchParams: jest.fn(() => new URLSearchParams()),
+vi.mock('@/next/navigation', () => ({
+  useSearchParams: vi.fn(() => new URLSearchParams()),
 }))
 
-const mockUseProviderContext = jest.fn()
-jest.mock('@/context/provider-context', () => ({
+const mockUseProviderContext = vi.fn()
+vi.mock('@/context/provider-context', () => ({
   useProviderContext: () => mockUseProviderContext(),
 }))
 
-const mockUseAppContext = jest.fn()
-jest.mock('@/context/app-context', () => ({
+const mockUseAppContext = vi.fn()
+vi.mock('@/context/app-context', () => ({
   useAppContext: () => mockUseAppContext(),
 }))
 
 let latestTriggerEventsModalProps: any = null
-const triggerEventsLimitModalMock = jest.fn((props: any) => {
+const triggerEventsLimitModalMock = vi.fn((props: any) => {
   latestTriggerEventsModalProps = props
   return (
     <div data-testid="trigger-limit-modal">
-      <button type="button" onClick={props.onDismiss}>dismiss</button>
+      <button type="button" onClick={props.onClose}>dismiss</button>
       <button type="button" onClick={props.onUpgrade}>upgrade</button>
     </div>
   )
 })
 
-jest.mock('@/app/components/billing/trigger-events-limit-modal', () => ({
-  __esModule: true,
+vi.mock('@/app/components/billing/trigger-events-limit-modal', () => ({
   default: (props: any) => triggerEventsLimitModalMock(props),
 }))
 
 type DefaultPlanShape = typeof defaultPlan
+type ResetShape = {
+  apiRateLimit: number | null
+  triggerEvents: number | null
+}
+type PlanShape = Omit<DefaultPlanShape, 'reset'> & { reset: ResetShape }
 type PlanOverrides = Partial<Omit<DefaultPlanShape, 'usage' | 'total' | 'reset'>> & {
   usage?: Partial<DefaultPlanShape['usage']>
   total?: Partial<DefaultPlanShape['total']>
-  reset?: Partial<DefaultPlanShape['reset']>
+  reset?: Partial<ResetShape>
 }
 
-const createPlan = (overrides: PlanOverrides = {}): DefaultPlanShape => ({
+const createPlan = (overrides: PlanOverrides = {}): PlanShape => ({
   ...defaultPlan,
   ...overrides,
   usage: {
@@ -66,7 +71,7 @@ const createPlan = (overrides: PlanOverrides = {}): DefaultPlanShape => ({
   },
 })
 
-const renderProvider = () => render(
+const renderProvider = () => renderWithNuqs(
   <ModalContextProvider>
     <div data-testid="modal-context-test-child" />
   </ModalContextProvider>,
@@ -87,7 +92,7 @@ describe('ModalContextProvider trigger events limit modal', () => {
   })
 
   afterEach(() => {
-    jest.restoreAllMocks()
+    vi.restoreAllMocks()
   })
 
   it('opens the trigger events limit modal and persists dismissal in localStorage', async () => {
@@ -101,24 +106,28 @@ describe('ModalContextProvider trigger events limit modal', () => {
       plan,
       isFetchedPlan: true,
     })
-    const setItemSpy = jest.spyOn(Storage.prototype, 'setItem')
+    // Note: vitest.setup.ts replaces localStorage with a mock object that has vi.fn() methods
+    // We need to spy on the mock's setItem, not Storage.prototype.setItem
+    const setItemSpy = vi.spyOn(localStorage, 'setItem')
 
     renderProvider()
 
-    await waitFor(() => expect(screen.getByTestId('trigger-limit-modal')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('trigger-limit-modal'))!.toBeInTheDocument())
     expect(latestTriggerEventsModalProps).toMatchObject({
       usage: 3000,
       total: 3000,
       resetInDays: 5,
-      planType: Plan.professional,
     })
 
     act(() => {
-      latestTriggerEventsModalProps.onDismiss()
+      latestTriggerEventsModalProps.onClose()
     })
 
     await waitFor(() => expect(screen.queryByTestId('trigger-limit-modal')).not.toBeInTheDocument())
-    const [key, value] = setItemSpy.mock.calls[0]
+    await waitFor(() => {
+      expect(setItemSpy.mock.calls.length).toBeGreaterThan(0)
+    })
+    const [key, value] = (setItemSpy.mock.calls[0] ?? []) as [any, any]
     expect(key).toContain('trigger-events-limit-dismissed-workspace-1-professional-3000-')
     expect(value).toBe('1')
   })
@@ -134,17 +143,17 @@ describe('ModalContextProvider trigger events limit modal', () => {
       plan,
       isFetchedPlan: true,
     })
-    jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
       throw new Error('Storage disabled')
     })
-    const setItemSpy = jest.spyOn(Storage.prototype, 'setItem')
+    const setItemSpy = vi.spyOn(localStorage, 'setItem')
 
     renderProvider()
 
-    await waitFor(() => expect(screen.getByTestId('trigger-limit-modal')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('trigger-limit-modal'))!.toBeInTheDocument())
 
     act(() => {
-      latestTriggerEventsModalProps.onDismiss()
+      latestTriggerEventsModalProps.onClose()
     })
 
     await waitFor(() => expect(screen.queryByTestId('trigger-limit-modal')).not.toBeInTheDocument())
@@ -163,16 +172,16 @@ describe('ModalContextProvider trigger events limit modal', () => {
       plan,
       isFetchedPlan: true,
     })
-    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
       throw new Error('Quota exceeded')
     })
 
     renderProvider()
 
-    await waitFor(() => expect(screen.getByTestId('trigger-limit-modal')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('trigger-limit-modal'))!.toBeInTheDocument())
 
     act(() => {
-      latestTriggerEventsModalProps.onDismiss()
+      latestTriggerEventsModalProps.onClose()
     })
 
     await waitFor(() => expect(screen.queryByTestId('trigger-limit-modal')).not.toBeInTheDocument())

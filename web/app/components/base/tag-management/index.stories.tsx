@@ -1,9 +1,9 @@
-import type { Meta, StoryObj } from '@storybook/nextjs'
+import type { Meta, StoryObj } from '@storybook/nextjs-vite'
+import type { Tag } from './constant'
+import { ToastHost } from '@langgenius/dify-ui/toast'
 import { useEffect, useRef } from 'react'
 import TagManagementModal from '.'
-import { ToastProvider } from '@/app/components/base/toast'
 import { useStore as useTagStore } from './store'
-import type { Tag } from './constant'
 
 const INITIAL_TAGS: Tag[] = [
   { id: 'tag-product', name: 'Product', type: 'app', binding_count: 12 },
@@ -48,7 +48,7 @@ const TagManagementPlayground = ({
           })
         }
         if (method === 'POST') {
-          const body = await request.clone().json() as { name: string; type: string }
+          const body = await request.clone().json() as { name: string, type: string }
           const newTag: Tag = {
             id: `tag-${Date.now()}`,
             name: body.name,
@@ -86,7 +86,8 @@ const TagManagementPlayground = ({
   }, [setTagList])
 
   return (
-    <ToastProvider>
+    <>
+      <ToastHost />
       <div className="flex w-full max-w-xl flex-col gap-4 rounded-2xl border border-divider-subtle bg-components-panel-bg p-6">
         <button
           type="button"
@@ -98,7 +99,7 @@ const TagManagementPlayground = ({
         <p className="text-xs text-text-tertiary">Mocked tag management flows with create and bind actions.</p>
       </div>
       <TagManagementModal show={showModal} type={type} />
-    </ToastProvider>
+    </>
   )
 }
 

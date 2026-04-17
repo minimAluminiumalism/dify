@@ -1,4 +1,4 @@
-import type { Meta, StoryObj } from '@storybook/nextjs'
+import type { Meta, StoryObj } from '@storybook/nextjs-vite'
 import { RiLineChartLine, RiListCheck2, RiRobot2Line } from '@remixicon/react'
 import { useState } from 'react'
 import { SegmentedControl } from '.'
@@ -24,10 +24,12 @@ const SegmentedControlDemo = ({
 
   return (
     <div className="flex w-full max-w-lg flex-col gap-4 rounded-2xl border border-divider-subtle bg-components-panel-bg p-6">
-      <div className="flex items-center justify-between text-xs uppercase tracking-[0.18em] text-text-tertiary">
+      <div className="flex items-center justify-between text-xs tracking-[0.18em] text-text-tertiary uppercase">
         <span>Segmented control</span>
         <code className="rounded-md bg-background-default px-2 py-1 text-[11px] text-text-tertiary">
-          value="{value}"
+          value="
+          {value}
+          "
         </code>
       </div>
       <SegmentedControl

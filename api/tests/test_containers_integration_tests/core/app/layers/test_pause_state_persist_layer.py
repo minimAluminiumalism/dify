@@ -31,16 +31,15 @@ from core.app.layers.pause_state_persist_layer import (
     PauseStatePersistenceLayer,
     WorkflowResumptionContext,
 )
-from core.model_runtime.entities.llm_entities import LLMUsage
-from core.workflow.entities.pause_reason import SchedulingPause
-from core.workflow.enums import WorkflowExecutionStatus
-from core.workflow.graph_engine.entities.commands import GraphEngineCommand
-from core.workflow.graph_events.graph import GraphRunPausedEvent
-from core.workflow.runtime.graph_runtime_state import GraphRuntimeState
-from core.workflow.runtime.graph_runtime_state_protocol import ReadOnlyGraphRuntimeState
-from core.workflow.runtime.read_only_wrappers import ReadOnlyGraphRuntimeStateWrapper
-from core.workflow.runtime.variable_pool import SystemVariable, VariablePool
+from core.workflow.system_variables import build_system_variables
 from extensions.ext_storage import storage
+from graphon.entities.pause_reason import SchedulingPause
+from graphon.enums import WorkflowExecutionStatus
+from graphon.graph_engine.entities.commands import GraphEngineCommand
+from graphon.graph_engine.layers.base import GraphEngineLayerNotInitializedError
+from graphon.graph_events import GraphRunPausedEvent
+from graphon.model_runtime.entities.llm_entities import LLMUsage
+from graphon.runtime import GraphRuntimeState, ReadOnlyGraphRuntimeState, ReadOnlyGraphRuntimeStateWrapper, VariablePool
 from libs.datetime_utils import naive_utc_now
 from models import Account
 from models import WorkflowPause as WorkflowPauseModel
@@ -89,11 +88,11 @@ class TestPauseStatePersistenceLayerTestContainers:
     def setup_test_data(self, db_session_with_containers, file_service, workflow_run_service):
         """Set up test data for each test method using TestContainers."""
         # Create test tenant and account
-        from models.account import Tenant, TenantAccountJoin, TenantAccountRole
+        from models.account import AccountStatus, Tenant, TenantAccountJoin, TenantAccountRole, TenantStatus
 
         tenant = Tenant(
             name="Test Tenant",
-            status="normal",
+            status=TenantStatus.NORMAL,
         )
         db_session_with_containers.add(tenant)
         db_session_with_containers.commit()
@@ -102,7 +101,7 @@ class TestPauseStatePersistenceLayerTestContainers:
             email="test@example.com",
             name="Test User",
             interface_language="en-US",
-            status="active",
+            status=AccountStatus.ACTIVE,
         )
         db_session_with_containers.add(account)
         db_session_with_containers.commit()
@@ -211,7 +210,7 @@ class TestPauseStatePersistenceLayerTestContainers:
         execution_id = workflow_run_id or getattr(self, "test_workflow_run_id", None) or str(uuid.uuid4())
 
         # Create variable pool
-        variable_pool = VariablePool(system_variables=SystemVariable(workflow_execution_id=execution_id))
+        variable_pool = VariablePool(system_variables=build_system_variables(workflow_execution_id=execution_id))
         if variables:
             for (node_id, var_key), value in variables.items():
                 variable_pool.add([node_id, var_key], value)
@@ -319,7 +318,7 @@ class TestPauseStatePersistenceLayerTestContainers:
 
         # Create pause event
         event = GraphRunPausedEvent(
-            reason=SchedulingPause(message="test pause"),
+            reasons=[SchedulingPause(message="test pause")],
             outputs={"intermediate": "result"},
         )
 
@@ -381,7 +380,7 @@ class TestPauseStatePersistenceLayerTestContainers:
         command_channel = _TestCommandChannelImpl()
         layer.initialize(graph_runtime_state, command_channel)
 
-        event = GraphRunPausedEvent(reason=SchedulingPause(message="test pause"))
+        event = GraphRunPausedEvent(reasons=[SchedulingPause(message="test pause")])
 
         # Act - Save pause state
         layer.on_event(event)
@@ -390,6 +389,7 @@ class TestPauseStatePersistenceLayerTestContainers:
         pause_entity = self.workflow_run_service._workflow_run_repo.get_workflow_pause(self.test_workflow_run_id)
         assert pause_entity is not None
         assert pause_entity.workflow_execution_id == self.test_workflow_run_id
+        assert pause_entity.get_pause_reasons() == event.reasons
 
         state_bytes = pause_entity.get_state()
         resumption_context = WorkflowResumptionContext.loads(state_bytes.decode())
@@ -414,7 +414,7 @@ class TestPauseStatePersistenceLayerTestContainers:
         command_channel = _TestCommandChannelImpl()
         layer.initialize(graph_runtime_state, command_channel)
 
-        event = GraphRunPausedEvent(reason=SchedulingPause(message="test pause"))
+        event = GraphRunPausedEvent(reasons=[SchedulingPause(message="test pause")])
 
         # Act
         layer.on_event(event)
@@ -448,7 +448,7 @@ class TestPauseStatePersistenceLayerTestContainers:
         command_channel = _TestCommandChannelImpl()
         layer.initialize(graph_runtime_state, command_channel)
 
-        event = GraphRunPausedEvent(reason=SchedulingPause(message="test pause"))
+        event = GraphRunPausedEvent(reasons=[SchedulingPause(message="test pause")])
 
         # Act
         layer.on_event(event)
@@ -514,7 +514,7 @@ class TestPauseStatePersistenceLayerTestContainers:
         command_channel = _TestCommandChannelImpl()
         layer.initialize(graph_runtime_state, command_channel)
 
-        event = GraphRunPausedEvent(reason=SchedulingPause(message="test pause"))
+        event = GraphRunPausedEvent(reasons=[SchedulingPause(message="test pause")])
 
         # Act
         layer.on_event(event)
@@ -542,7 +542,7 @@ class TestPauseStatePersistenceLayerTestContainers:
         layer.initialize(graph_runtime_state, command_channel)
 
         # Import other event types
-        from core.workflow.graph_events.graph import (
+        from graphon.graph_events import (
             GraphRunFailedEvent,
             GraphRunStartedEvent,
             GraphRunSucceededEvent,
@@ -557,21 +557,19 @@ class TestPauseStatePersistenceLayerTestContainers:
         self.session.refresh(self.test_workflow_run)
         assert self.test_workflow_run.status == WorkflowExecutionStatus.RUNNING
 
-        pause_states = (
-            self.session.query(WorkflowPauseModel)
-            .filter(WorkflowPauseModel.workflow_run_id == self.test_workflow_run_id)
-            .all()
-        )
+        pause_states = self.session.scalars(
+            select(WorkflowPauseModel).where(WorkflowPauseModel.workflow_run_id == self.test_workflow_run_id)
+        ).all()
         assert len(pause_states) == 0
 
     def test_layer_requires_initialization(self, db_session_with_containers):
         """Test that layer requires proper initialization before handling events."""
         # Arrange
         layer = self._create_pause_state_persistence_layer()
-        # Don't initialize - graph_runtime_state should not be set
+        # Don't initialize - graph_runtime_state should be uninitialized
 
-        event = GraphRunPausedEvent(reason=SchedulingPause(message="test pause"))
+        event = GraphRunPausedEvent(reasons=[SchedulingPause(message="test pause")])
 
-        # Act & Assert - Should raise AttributeError
-        with pytest.raises(AttributeError):
+        # Act & Assert - Should raise GraphEngineLayerNotInitializedError
+        with pytest.raises(GraphEngineLayerNotInitializedError):
             layer.on_event(event)

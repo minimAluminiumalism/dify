@@ -1,26 +1,26 @@
+import type { NodeProps } from 'reactflow'
+import type { NoteNodeType } from './types'
+import { cn } from '@langgenius/dify-ui/cn'
+import { useClickAway } from 'ahooks'
 import {
   memo,
   useRef,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useClickAway } from 'ahooks'
-import type { NodeProps } from 'reactflow'
-import NodeResizer from '../nodes/_base/components/node-resizer'
-import { useWorkflowHistoryStore } from '../workflow-history-store'
 import {
   useNodeDataUpdate,
   useNodesInteractions,
 } from '../hooks'
+import NodeResizer from '../nodes/_base/components/node-resizer'
 import { useStore } from '../store'
+import { useWorkflowHistoryStore } from '../workflow-history-store'
+import { THEME_MAP } from './constants'
+import { useNote } from './hooks'
 import {
   NoteEditor,
   NoteEditorContextProvider,
   NoteEditorToolbar,
 } from './note-editor'
-import { THEME_MAP } from './constants'
-import { useNote } from './hooks'
-import type { NoteNodeType } from './types'
-import cn from '@/utils/classnames'
 
 const Icon = () => {
   return (
@@ -60,8 +60,8 @@ const NoteNode = ({
     <div
       className={cn(
         'relative flex flex-col rounded-md border shadow-xs hover:shadow-md',
-        THEME_MAP[theme].bg,
-        data.selected ? THEME_MAP[theme].border : 'border-black/5',
+        THEME_MAP[theme]!.bg,
+        data.selected ? THEME_MAP[theme]!.border : 'border-black/5',
       )}
       style={{
         width: data.width,
@@ -89,11 +89,13 @@ const NoteNode = ({
           <div
             className={cn(
               'h-2 shrink-0 rounded-t-md opacity-50',
-              THEME_MAP[theme].title,
-            )}></div>
+              THEME_MAP[theme]!.title,
+            )}
+          >
+          </div>
           {
             data.selected && !data._isTempNode && (
-              <div className='absolute left-1/2 top-[-41px] -translate-x-1/2'>
+              <div className="pointer-events-auto absolute top-[-41px] left-1/2 z-40 -translate-x-1/2">
                 <NoteEditorToolbar
                   theme={theme}
                   onThemeChange={handleThemeChange}
@@ -106,13 +108,14 @@ const NoteNode = ({
               </div>
             )
           }
-          <div className='grow overflow-y-auto px-3 py-2.5'>
+          <div className="grow overflow-y-auto px-3 py-2.5">
             <div className={cn(
               data.selected && 'nodrag nopan nowheel cursor-text',
-            )}>
+            )}
+            >
               <NoteEditor
                 containerElement={ref.current}
-                placeholder={t('workflow.nodes.note.editor.placeholder') || ''}
+                placeholder={t('nodes.note.editor.placeholder', { ns: 'workflow' }) || ''}
                 onChange={handleEditorChange}
                 setShortcutsEnabled={setShortcutsEnabled}
               />
@@ -120,7 +123,7 @@ const NoteNode = ({
           </div>
           {
             data.showAuthor && (
-              <div className='p-3 pt-0 text-xs text-text-tertiary'>
+              <div className="p-3 pt-0 text-xs text-text-tertiary">
                 {data.author}
               </div>
             )

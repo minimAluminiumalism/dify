@@ -1,12 +1,7 @@
-import { useReactFlow } from 'reactflow'
 import { useKeyPress } from 'ahooks'
-import { useCallback } from 'react'
-import {
-  getKeyboardKeyCodeBySystem,
-  isEventTargetInputArea,
-} from '../utils'
-import { useWorkflowHistoryStore } from '../workflow-history-store'
-import { useWorkflowStore } from '../store'
+import { useCallback, useEffect } from 'react'
+import { useReactFlow } from 'reactflow'
+import { ZEN_TOGGLE_EVENT } from '@/app/components/goto-anything/actions/commands/zen'
 import {
   useEdgesInteractions,
   useNodesInteractions,
@@ -15,6 +10,13 @@ import {
   useWorkflowMoveMode,
   useWorkflowOrganize,
 } from '.'
+import { collaborationManager } from '../collaboration/core/collaboration-manager'
+import { useWorkflowStore } from '../store'
+import {
+  getKeyboardKeyCodeBySystem,
+  isEventTargetInputArea,
+} from '../utils'
+import { useWorkflowHistoryStore } from '../workflow-history-store'
 
 export const useShortcuts = (): void => {
   const {
@@ -34,6 +36,8 @@ export const useShortcuts = (): void => {
   const {
     handleModeHand,
     handleModePointer,
+    handleModeComment,
+    isCommentModeAvailable,
   } = useWorkflowMoveMode()
   const { handleLayout } = useWorkflowOrganize()
   const { handleToggleMaximizeCanvas } = useWorkflowCanvasMaximize()
@@ -42,6 +46,7 @@ export const useShortcuts = (): void => {
     zoomTo,
     getZoom,
     fitView,
+    getNodes,
   } = useReactFlow()
 
   // Zoom out to a minimum of 0.25 for shortcut
@@ -62,6 +67,16 @@ export const useShortcuts = (): void => {
     return !isEventTargetInputArea(e.target as HTMLElement)
   }, [])
 
+  const shouldHandleCopy = useCallback(() => {
+    // Box selection can leave incidental DOM text selection behind while the
+    // workflow selection itself lives on node.data._isBundled.
+    if (getNodes().some(node => node.data._isBundled))
+      return true
+
+    const selection = document.getSelection()
+    return !selection || selection.isCollapsed || !selection.rangeCount
+  }, [getNodes])
+
   useKeyPress(['delete', 'backspace'], (e) => {
     if (shouldHandleShortcut(e)) {
       e.preventDefault()
@@ -72,7 +87,7 @@ export const useShortcuts = (): void => {
 
   useKeyPress(`${getKeyboardKeyCodeBySystem('ctrl')}.c`, (e) => {
     const { showDebugAndPreviewPanel } = workflowStore.getState()
-    if (shouldHandleShortcut(e) && !showDebugAndPreviewPanel) {
+    if (shouldHandleShortcut(e) && shouldHandleCopy() && !showDebugAndPreviewPanel) {
       e.preventDefault()
       handleNodesCopy()
     }
@@ -139,6 +154,16 @@ export const useShortcuts = (): void => {
     if (shouldHandleShortcut(e)) {
       e.preventDefault()
       handleModePointer()
+    }
+  }, {
+    exactMatch: true,
+    useCapture: true,
+  })
+
+  useKeyPress('c', (e) => {
+    if (shouldHandleShortcut(e) && isCommentModeAvailable) {
+      e.preventDefault()
+      handleModeComment()
     }
   }, {
     exactMatch: true,
@@ -217,6 +242,13 @@ export const useShortcuts = (): void => {
     useCapture: true,
   })
 
+  useKeyPress(`${getKeyboardKeyCodeBySystem('ctrl')}.shift.l`, (e) => {
+    if (shouldHandleShortcut(e)) {
+      e.preventDefault()
+      collaborationManager.downloadGraphImportLog()
+    }
+  }, { exactMatch: true, useCapture: true })
+
   // Shift ↓
   useKeyPress(
     'shift',
@@ -246,4 +278,16 @@ export const useShortcuts = (): void => {
       events: ['keyup'],
     },
   )
+
+  // Listen for zen toggle event from /zen command
+  useEffect(() => {
+    const handleZenToggle = () => {
+      handleToggleMaximizeCanvas()
+    }
+
+    window.addEventListener(ZEN_TOGGLE_EVENT, handleZenToggle)
+    return () => {
+      window.removeEventListener(ZEN_TOGGLE_EVENT, handleZenToggle)
+    }
+  }, [handleToggleMaximizeCanvas])
 }
